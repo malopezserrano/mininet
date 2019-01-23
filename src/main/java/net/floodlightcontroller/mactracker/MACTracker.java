@@ -62,8 +62,8 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
       protected static short FLOWMOD_PRIORITY = 100;
 
       // for managing our map sizes
-      protected static final int MAX_MACS_PER_SWITCH  = 1000;
-      protected static final int MAX_MACS_PER_SWITCH_PORT  = 100;
+      protected static final int MAX_MACS_PER_SWITCH  = 4;
+      protected static final int MAX_MACS_PER_SWITCH_PORT  = 1;
 
       protected IFloodlightProviderService floodlightProvider;
       protected Set macAddresses;
@@ -115,8 +115,6 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
           macVlanToSwitchPortMap = new ConcurrentHashMap<IOFSwitch, Map<MacVlanPair, OFPort>>();
           logger = LoggerFactory.getLogger(MACTracker.class);
       }
-
-      macVlanToSwitchPortMap.mapp
 
       @Override
       public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
@@ -180,7 +178,7 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
 
 
         if (macsPerSwitch(sw) < MAX_MACS_PER_SWITCH) {
-          if (macsPerSwitchPort(sw, port) > MAX_MACS_PER_SWITCH_PORT) {
+          if (macsPerSwitchPort(sw, inPort) > MAX_MACS_PER_SWITCH_PORT) {
             dropPort = true;
           }
         } else {
@@ -232,34 +230,21 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
 
 
     if (macsPerSwitch(sw) < MAX_MACS_PER_SWITCH) {
-      if (macsPerSwitchPort(sw, port) < MAX_MACS_PER_SWITCH_PORT) {
+      if (macsPerSwitchPort(sw, match.get(MatchField.IN_PORT)) < MAX_MACS_PER_SWITCH_PORT) {
         deleteDropPort = true;
       }
     }
 
     if (deleteDropPort) {
-      Match.Builder mb = m.createBuilder();
-      List<OFAction> actions = new ArrayList<>(); // set no action to drop
-      mb.setExact(MatchField.IN_PORT, inPort);
+      Match.Builder mb = sw.getOFFactory().buildMatch();
+      mb.setExact(MatchField.IN_PORT, match.get(MatchField.IN_PORT));
       //.setExact(MatchField.ETH_DST, m.get(MatchField.ETH_SRC))
       //.setExact(MatchField.ETH_SRC, m.get(MatchField.ETH_DST));
-      if (m.get(MatchField.VLAN_VID) != null) {
-        mb.setExact(MatchField.VLAN_VID, m.get(MatchField.VLAN_VID));
+      if (match.get(MatchField.VLAN_VID) != null) {
+        mb.setExact(MatchField.VLAN_VID, match.get(MatchField.VLAN_VID));
       }
-      this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mb.build(), inPort);
+      this.writeFlowMod(sw, OFFlowModCommand.DELETE, OFBufferId.NO_BUFFER, mb.build(), match.get(MatchField.IN_PORT));
     }
-    return Command.CONTINUE;
-
-
-
-
-    Match.Builder mb = sw.getOFFactory().buildMatch();
-    mb.setExact(MatchField.ETH_SRC, match.get(MatchField.ETH_DST))
-    .setExact(MatchField.ETH_DST, match.get(MatchField.ETH_SRC));
-    if (match.get(MatchField.VLAN_VID) != null) {
-      mb.setExact(MatchField.VLAN_VID, match.get(MatchField.VLAN_VID));
-    }
-    //this.writeFlowMod(sw, OFFlowModCommand.DELETE, OFBufferId.NO_BUFFER, mb.build(), match.get(MatchField.IN_PORT));
     return Command.CONTINUE;
   }
 
@@ -380,6 +365,9 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
         logger.info("MAC Address: {} added on switch: {}",
               mac.toString(),
               sw.getId().toString());
+    printTable(macVlanToSwitchPortMap);
+    logger.info("Switch: {} contiene {} MACs",sw, (macsPerSwitch(sw)));
+    logger.info("puerto {} contiene {} MACs",portVal, (macsPerSwitchPort(sw,portVal)));
   }
 
   /**
@@ -439,15 +427,9 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
     }
   }
 
-  public void printTable(ConcurrentHashMap<IOFSwitch, Map<MacVlanPair, OFPort>> map) {
+  public void printTable(Map<IOFSwitch, Map<MacVlanPair, OFPort>> map) {
     for (IOFSwitch key : map.keySet()) {
-      System.out.println(key + " " + map.get(key));
-    }
-
-    for (Map.Entry<IOFSwitch, Map<MacVlanPair, OFPort>> entry : map.entrySet()) {
-      IOFSwitch key = entry.getKey().toString();
-      Map<MacVlanPair, OFPort> value = entry.getValue();
-      System.out.println("key, " + key + " value " + value);
+      logger.info("key {} value {}", key.toString(), map.get(key));
     }
   }
 
@@ -458,12 +440,12 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
 
   public int macsPerSwitchPort(IOFSwitch sw, OFPort port ) {
     Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
+    int counter = 0;
 
     for (Map.Entry<MacVlanPair, OFPort> entry : swMap.entrySet()) {
-      MacVlanPair key = entry.getKey().toString();
+      MacVlanPair key = entry.getKey();
       OFPort value = entry.getValue();
-      int counter = 0;
-      if value.equals(port) {
+      if (value.equals(port)) {
         counter ++;
       }
     }
