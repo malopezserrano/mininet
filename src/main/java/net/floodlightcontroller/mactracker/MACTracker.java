@@ -37,6 +37,7 @@ import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.action.OFActionSetQueue;
 import org.projectfloodlight.openflow.protocol.action.OFActionEnqueue;
+import org.projectfloodlight.openflow.protocol.action.OFActionOutput;
 import org.projectfloodlight.openflow.protocol.OFFactories;
 import org.projectfloodlight.openflow.protocol.OFFactory;
 import org.projectfloodlight.openflow.protocol.instruction.OFInstruction;
@@ -71,6 +72,9 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
       protected static short FLOWMOD_DEFAULT_IDLE_TIMEOUT = 5; // in seconds
       protected static short FLOWMOD_DEFAULT_HARD_TIMEOUT = 0; // infinite
       protected static short FLOWMOD_PRIORITY = 100;
+
+      // flow remove
+      protected static boolean FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG = true;
 
       // for managing load thresholds
       protected static final int MAX_MACS_PER_SWITCH  = 10;
@@ -135,6 +139,9 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
       public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
           // TODO Auto-generated method stub
           floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+	  floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+	  floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
+	  floodlightProvider.addOFMessageListener(OFType.ERROR, this);
       }
 
       @Override
@@ -158,7 +165,7 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
           OFPort inPort = OFMessageUtils.getInPort(pi);
 
           // Packet-in is only processed for upload traffic
-          if (inPort==6) {
+          if (inPort.getPortNumber()==6) {
             logger.info("packet-in received from wired interface on switch {}", sw);
           } else {
             logger.info("packet-in received from wirelesss interface on switch {}", sw);
@@ -166,7 +173,8 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
             //Match m = createMatchFromPacket(sw, inPort, cntx);
 
             Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-            VlanVid vlan = VlanVid.ofVlan(eth.getVlanID());
+            //VlanVid vlan = VlanVid.ofVlan(eth.getVlanID());
+            VlanVid vlan = VlanVid.ofVlan(eth.getVlanID()) == null ? VlanVid.ZERO : VlanVid.ofVlan(eth.getVlanID());
             MacAddress srcMac = eth.getSourceMACAddress();
             MacAddress dstMac = eth.getDestinationMACAddress();
 
@@ -274,16 +282,12 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
       public void setQos (IOFSwitch sw, Match.Builder mb, OFPort inPort, Level level){
           int queue = 0;
 
-
-
           Match m = mb.build();
           Match.Builder mbp = m.createBuilder();
           mbp.setExact(MatchField.IN_PORT, inPort);
           if (mb.get(MatchField.VLAN_VID) != null) {
             mbp.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
           }
-
-
 
           logger.info("setqos src mac in packet-in {}",mb.get(MatchField.ETH_SRC));
           logger.info("setqos dst mac in packet-in {}",mb.get(MatchField.ETH_DST));
@@ -302,15 +306,15 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
           switch (getApp(mb.get(MatchField.TCP_DST))) {
             case WEB:
               logger.info ("Selection QoS for WEB");
-              if (level==Level.LOW) {queue=1;} else {queue=2;}
+              if (level==Level.LOW) {queue=4;} else {queue=3;}
               break;
             case STREAMING:
               logger.info ("Selection QoS for STREAMING");
-              if (level==Level.LOW) {queue=3;} else {queue=4;}
+              if (level==Level.LOW) {queue=6;} else {queue=5;}
               break;
             case UNKNOWN:
               logger.info ("Selection QoS for UNKNOWN");
-              if (level==Level.LOW) {queue=5;} else {queue=6;}
+              if (level==Level.LOW) {queue=2;} else {queue=1;}
               break;
           }
           logger.info ("Queue selected {}", queue);
@@ -418,10 +422,10 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
     fmb.setOutPort((command == OFFlowModCommand.DELETE) ? OFPort.ANY : outPort);
     Set<OFFlowModFlags> sfmf = new HashSet<OFFlowModFlags>();
     if (command != OFFlowModCommand.DELETE) {
+        logger.info("Añadiendo flag SEND_FLOW_REM");
         sfmf.add(OFFlowModFlags.SEND_FLOW_REM);
     }
     fmb.setFlags(sfmf);
-
 
     // set the ofp_action_header/out actions:
       // from the openflow 1.0 spec: need to set these on a struct ofp_action_output:
@@ -453,7 +457,17 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
        logger.info("Queues OF_13");
    }
    }
+   OFActionOutput output = sw.getOFFactory().actions().buildOutput()
+    .setMaxLen(0xFFffFFff)
+    .setPort(OFPort.NORMAL)
+    .build();
+   actions.add(output);
 
+   if (FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG) {
+       Set<OFFlowModFlags> flags = new HashSet<>();
+       flags.add(OFFlowModFlags.SEND_FLOW_REM);
+       fmb.setFlags(flags);
+   }
 
     FlowModUtils.setActions(fmb, actions, sw);
 
@@ -500,20 +514,20 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
    * @param vlan The VLAN that the host is on
    */
   protected void removeFromPortMap(IOFSwitch sw, MacAddress mac, VlanVid vlan) {
+    //OFPort portVal = getFromPortMap(sw,mac,vlan);
     if (vlan == VlanVid.FULL_MASK) {
       vlan = VlanVid.ofVlan(0);
     }
 
     Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
     if (swMap != null) {
+      logger.info("mac :{}, vlan:{}",mac,vlan);
       swMap.remove(new MacVlanPair(mac, vlan));
-            logger.info("MAC Address: {} removed on switch: {}",
-                  mac.toString(),
-                  sw.getId().toString());
+      logger.info("MAC Address: {} removed on switch: {}",mac.toString(),sw.getId().toString());
     }
     printTable(macVlanToSwitchPortMap);
     logger.info("Switch: {} contiene {} MACs after Flow-Remove",sw, (macsPerSwitch(sw)));
-    logger.info("puerto {} contiene {} MACs after Flow-Remove",portVal, (macsPerSwitchPort(sw,portVal)));
+    //logger.info("puerto {} contiene {} MACs after Flow-Remove", portVal, macsPerSwitchPort(sw,portVal));
   }
 
   /**
