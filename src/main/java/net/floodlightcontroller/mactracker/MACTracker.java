@@ -156,99 +156,104 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
 
   private Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx) {
           OFPort inPort = OFMessageUtils.getInPort(pi);
-          logger.info("packet-in received on switch {}", sw);
 
-          /* Read packet header attributes into Match */
-          //Match m = createMatchFromPacket(sw, inPort, cntx);
-
-          Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-          VlanVid vlan = VlanVid.ofVlan(eth.getVlanID());
-          MacAddress srcMac = eth.getSourceMACAddress();
-          MacAddress dstMac = eth.getDestinationMACAddress();
-
-          Match.Builder mb = sw.getOFFactory().buildMatch();
-          mb.setExact(MatchField.IN_PORT, inPort)
-	  .setExact(MatchField.ETH_SRC, srcMac)
-	  .setExact(MatchField.ETH_DST, dstMac);
-
-	  if (!vlan.equals(VlanVid.ZERO)) {
-	    mb.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(vlan));
-	  }
-
-          TransportPort srcTcpPort;
-          srcTcpPort = TransportPort.of(0);
-          TransportPort dstTcpPort;
-          dstTcpPort = TransportPort.of(0);
-
-          if (srcMac == null) {
-             srcMac = MacAddress.NONE;
-          }
-          if (dstMac == null) {
-             dstMac = MacAddress.NONE;
-          }
-          if (vlan == null) {
-             vlan = VlanVid.ZERO;
-          }
-
-          if (eth.getEtherType() == EthType.IPv4) {
-            IPv4 ipv4 = (IPv4) eth.getPayload();
-            IPv4Address srcIp = ipv4.getSourceAddress();
-            IPv4Address dstIp = ipv4.getDestinationAddress();
-            mb.setExact(MatchField.IPV4_SRC, srcIp);
-            mb.setExact(MatchField.IPV4_DST, dstIp);
-            if (ipv4.getProtocol() == IpProtocol.TCP) {
-              TCP tcp = (TCP) ipv4.getPayload();
-              srcTcpPort = tcp.getSourcePort();
-              dstTcpPort = tcp.getDestinationPort();
-              mb.setExact(MatchField.TCP_SRC, srcTcpPort);
-              mb.setExact(MatchField.TCP_DST, dstTcpPort);
-          } else if (ipv4.getProtocol() == IpProtocol.UDP) {
-              UDP udp = (UDP) ipv4.getPayload();
-              TransportPort srcUdpPort = udp.getSourcePort();
-              TransportPort dstUdpPort = udp.getDestinationPort();
-              mb.setExact(MatchField.UDP_SRC, srcUdpPort);
-              mb.setExact(MatchField.UDP_SRC, srcUdpPort);
+          // Packet-in is only processed for upload traffic
+          if (inPort==6) {
+            logger.info("packet-in received from wired interface on switch {}", sw);
           } else {
-             logger.info("Unhandled ethertype");
-          }
-          } 
+            logger.info("packet-in received from wirelesss interface on switch {}", sw);
+            /* Read packet header attributes into Match */
+            //Match m = createMatchFromPacket(sw, inPort, cntx);
 
-          Match m = mb.build();
-        
-          /*logger.info("mb src mac in packet-in {}",mb.get(MatchField.ETH_SRC));
-          logger.info("mb dst mac in packet-in {}",mb.get(MatchField.ETH_DST));
-          logger.info("mb src tcp in packet-in {}",mb.get(MatchField.TCP_SRC));
-          logger.info("mb dst tcp in packet-in {}",mb.get(MatchField.TCP_DST));*/
+            Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+            VlanVid vlan = VlanVid.ofVlan(eth.getVlanID());
+            MacAddress srcMac = eth.getSourceMACAddress();
+            MacAddress dstMac = eth.getDestinationMACAddress();
 
-          if ((srcMac.getLong() & 0x010000000000L) == 0) {
-          // If source MAC is a unicast address, learn the port for this MAC/VLAN
-          this.addToPortMap(sw, srcMac, vlan, inPort);
-        }
+            Match.Builder mb = sw.getOFFactory().buildMatch();
+            mb.setExact(MatchField.IN_PORT, inPort)
+	          .setExact(MatchField.ETH_SRC, srcMac)
+	          .setExact(MatchField.ETH_DST, dstMac);
 
-        // Add flow table entry matching source MAC, dest MAC, VLAN and input port
-        // that sends to the port we previously learned for the dest MAC/VLAN.  Also
-        // add a flow table entry with source and destination MACs reversed, and
-        // input and output ports reversed.  When either entry expires due to idle
-        // timeout, remove the other one.  This ensures that if a device moves to
-        // a different port, a constant stream of packets headed to the device at
-        // its former location does not keep the stale entry alive forever.
-        // FIXME: current HP switches ignore DL_SRC and DL_DST fields, so we have to match on
-        // NW_SRC and NW_DST as well
-        // We write FlowMods with Buffer ID none then explicitly PacketOut the buffered packet
+        	  if (!vlan.equals(VlanVid.ZERO)) {
+        	    mb.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(vlan));
+        	  }
 
-        switch (getAPLoadLevel(sw, inPort)) {
-          case LOW:
-            logger.info("Packet-in AP LOW level");
-            setQos(sw,mb,inPort,Level.LOW);
-            break;
-          case HIGH:
-            logger.info("Packet-in AP HIGH level");
-            setQos(sw,mb,inPort,Level.HIGH);
-            break;
-          case CRITICAL:
-            logger.info("Packet-in AP CRITICAL level");
-            dropPort(sw,mb,inPort);
-            break;
+            TransportPort srcTcpPort;
+            srcTcpPort = TransportPort.of(0);
+            TransportPort dstTcpPort;
+            dstTcpPort = TransportPort.of(0);
+
+            if (srcMac == null) {
+               srcMac = MacAddress.NONE;
+            }
+            if (dstMac == null) {
+               dstMac = MacAddress.NONE;
+            }
+            if (vlan == null) {
+               vlan = VlanVid.ZERO;
+            }
+
+            if (eth.getEtherType() == EthType.IPv4) {
+              IPv4 ipv4 = (IPv4) eth.getPayload();
+              IPv4Address srcIp = ipv4.getSourceAddress();
+              IPv4Address dstIp = ipv4.getDestinationAddress();
+              mb.setExact(MatchField.IPV4_SRC, srcIp);
+              mb.setExact(MatchField.IPV4_DST, dstIp);
+              if (ipv4.getProtocol() == IpProtocol.TCP) {
+                TCP tcp = (TCP) ipv4.getPayload();
+                srcTcpPort = tcp.getSourcePort();
+                dstTcpPort = tcp.getDestinationPort();
+                mb.setExact(MatchField.TCP_SRC, srcTcpPort);
+                mb.setExact(MatchField.TCP_DST, dstTcpPort);
+            } else if (ipv4.getProtocol() == IpProtocol.UDP) {
+                UDP udp = (UDP) ipv4.getPayload();
+                TransportPort srcUdpPort = udp.getSourcePort();
+                TransportPort dstUdpPort = udp.getDestinationPort();
+                mb.setExact(MatchField.UDP_SRC, srcUdpPort);
+                mb.setExact(MatchField.UDP_SRC, srcUdpPort);
+            } else {
+               logger.info("Unhandled ethertype");
+            }
+            }
+
+            Match m = mb.build();
+
+            /*logger.info("mb src mac in packet-in {}",mb.get(MatchField.ETH_SRC));
+            logger.info("mb dst mac in packet-in {}",mb.get(MatchField.ETH_DST));
+            logger.info("mb src tcp in packet-in {}",mb.get(MatchField.TCP_SRC));
+            logger.info("mb dst tcp in packet-in {}",mb.get(MatchField.TCP_DST));*/
+
+            if ((srcMac.getLong() & 0x010000000000L) == 0) {
+            // If source MAC is a unicast address, learn the port for this MAC/VLAN
+            this.addToPortMap(sw, srcMac, vlan, inPort);
+            }
+
+            // Add flow table entry matching source MAC, dest MAC, VLAN and input port
+            // that sends to the port we previously learned for the dest MAC/VLAN.  Also
+            // add a flow table entry with source and destination MACs reversed, and
+            // input and output ports reversed.  When either entry expires due to idle
+            // timeout, remove the other one.  This ensures that if a device moves to
+            // a different port, a constant stream of packets headed to the device at
+            // its former location does not keep the stale entry alive forever.
+            // FIXME: current HP switches ignore DL_SRC and DL_DST fields, so we have to match on
+            // NW_SRC and NW_DST as well
+            // We write FlowMods with Buffer ID none then explicitly PacketOut the buffered packet
+
+            switch (getAPLoadLevel(sw, inPort)) {
+              case LOW:
+                logger.info("Packet-in AP LOW level");
+                setQos(sw,mb,inPort,Level.LOW);
+                break;
+              case HIGH:
+                logger.info("Packet-in AP HIGH level");
+                setQos(sw,mb,inPort,Level.HIGH);
+                break;
+              case CRITICAL:
+                logger.info("Packet-in AP CRITICAL level");
+                dropPort(sw,mb,inPort);
+                break;
+            }
         }
         return Command.CONTINUE;
       }
@@ -264,7 +269,7 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
           //  mb.setExact(MatchField.VLAN_VID, m.get(MatchField.VLAN_VID));
           //}
           this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mb.build(), inPort, 0);
-      }   
+      }
 
       public void setQos (IOFSwitch sw, Match.Builder mb, OFPort inPort, Level level){
           int queue = 0;
@@ -328,10 +333,10 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
               break;
             default:
               app=APP.UNKNOWN;
-              break; 
+              break;
           }
           logger.info ("Application returned {}",app);
-          return app;  
+          return app;
       }
 
 
@@ -343,10 +348,10 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
    * @return Whether to continue processing this message or stop.
    */
   private Command processFlowRemovedMessage(IOFSwitch sw, OFFlowRemoved flowRemovedMessage) {
-    if (!flowRemovedMessage.getCookie().equals(U64.of(MACTracker.LEARNING_SWITCH_COOKIE))) {
+      if (!flowRemovedMessage.getCookie().equals(U64.of(MACTracker.LEARNING_SWITCH_COOKIE))) {
           return Command.CONTINUE;
       }
-    logger.trace("{} flow entry removed {}", sw, flowRemovedMessage);
+      logger.trace("{} flow entry removed {}", sw, flowRemovedMessage);
       Match match = flowRemovedMessage.getMatch();
       // When a flow entry expires, it means the device with the matching source
       // MAC address and VLAN either stopped sending packets or moved to a different
@@ -358,70 +363,12 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
           ? VlanVid.ZERO
           : match.get(MatchField.VLAN_VID).getVlanVid());
 
-    // Also, if packets keep coming from another device (e.g. from ping), the
-    // corresponding reverse flow entry will never expire on its own and will
-    // send the packets to the wrong port (the matching input port of the
-    // expired flow entry), so we must delete the reverse entry explicitly.
+      // Also, if packets keep coming from another device (e.g. from ping), the
+      // corresponding reverse flow entry will never expire on its own and will
+      // send the packets to the wrong port (the matching input port of the
+      // expired flow entry), so we must delete the reverse entry explicitly.
 
-       switch (getAPLoadLevel(sw, match.get(MatchField.IN_PORT))) {
-          case LOW:
-            setQos(sw,match.createBuilder(),match.get(MatchField.IN_PORT),Level.LOW);
-            break;
-          case HIGH:
-            setQos(sw,match.createBuilder(),match.get(MatchField.IN_PORT),Level.HIGH);
-            break;
-          case CRITICAL:
-            dropPort(sw,match.createBuilder(),match.get(MatchField.IN_PORT));
-            break;
-        }
-    return Command.CONTINUE;
-  }
-
-  protected Match createMatchFromPacket(IOFSwitch sw, OFPort inPort, FloodlightContext cntx) {
-
-    // The packet in match will only contain the port number.
-    // We need to add in specifics for the hosts we're routing between.
-    Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-    VlanVid vlan = VlanVid.ofVlan(eth.getVlanID());
-    MacAddress srcMac = eth.getSourceMACAddress();
-    MacAddress dstMac = eth.getDestinationMACAddress();
-    Match.Builder mb = sw.getOFFactory().buildMatch();
-    mb.setExact(MatchField.IN_PORT, inPort)
-    .setExact(MatchField.ETH_SRC, srcMac)
-    .setExact(MatchField.ETH_DST, dstMac);
-
-    if (eth.getEtherType() == EthType.IPv4) {
-      IPv4 ipv4 = (IPv4) eth.getPayload();
-      IPv4Address srcIp = ipv4.getSourceAddress();
-      IPv4Address dstIp = ipv4.getDestinationAddress();
-      mb.setExact(MatchField.IPV4_SRC, srcIp);
-      mb.setExact(MatchField.IPV4_DST, dstIp);
-             
-      if (ipv4.getProtocol() == IpProtocol.TCP) {
-        TCP tcp = (TCP) ipv4.getPayload();
-        TransportPort srcTcpPort = tcp.getSourcePort();
-        TransportPort dstTcpPort = tcp.getDestinationPort();
-        mb.setExact(MatchField.TCP_SRC, srcTcpPort);
-        mb.setExact(MatchField.TCP_DST, dstTcpPort);
-      } else if (ipv4.getProtocol() == IpProtocol.UDP) {
-        UDP udp = (UDP) ipv4.getPayload();
-        TransportPort srcUdpPort = udp.getSourcePort();
-        TransportPort dstUdpPort = udp.getDestinationPort();
-        mb.setExact(MatchField.UDP_SRC, srcUdpPort);
-        mb.setExact(MatchField.UDP_SRC, srcUdpPort);
-      } else {
-        logger.info("Unhandled ethertype");
-      }
-    }
-
-   if (!vlan.equals(VlanVid.ZERO)) {
-      mb.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(vlan));
-    }
-    logger.info("src mac before return {}",mb.get(MatchField.ETH_SRC));
-    logger.info("dst mac before return {}",mb.get(MatchField.ETH_DST));
-    logger.info("src tcp port before return {}",mb.get(MatchField.TCP_SRC));
-    logger.info("dst tcp port before return {}",mb.get(MatchField.TCP_DST));
-    return mb.build();
+      return Command.CONTINUE;
   }
 
   /**
@@ -542,8 +489,8 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
               mac.toString(),
               sw.getId().toString());
     printTable(macVlanToSwitchPortMap);
-    logger.info("Switch: {} contiene {} MACs",sw, (macsPerSwitch(sw)));
-    logger.info("puerto {} contiene {} MACs",portVal, (macsPerSwitchPort(sw,portVal)));
+    logger.info("Switch: {} contiene {} MACs after Packet-in",sw, (macsPerSwitch(sw)));
+    logger.info("puerto {} contiene {} MACs after Packet-in",portVal, (macsPerSwitchPort(sw,portVal)));
   }
 
   /**
@@ -564,6 +511,9 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
                   mac.toString(),
                   sw.getId().toString());
     }
+    printTable(macVlanToSwitchPortMap);
+    logger.info("Switch: {} contiene {} MACs after Flow-Remove",sw, (macsPerSwitch(sw)));
+    logger.info("puerto {} contiene {} MACs after Flow-Remove",portVal, (macsPerSwitchPort(sw,portVal)));
   }
 
   /**
@@ -640,4 +590,51 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
     }
       return Level.CRITICAL;
   }
+
+  protected Match createMatchFromPacket(IOFSwitch sw, OFPort inPort, FloodlightContext cntx) {
+    // The packet in match will only contain the port number.
+    // We need to add in specifics for the hosts we're routing between.
+    Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+    VlanVid vlan = VlanVid.ofVlan(eth.getVlanID());
+    MacAddress srcMac = eth.getSourceMACAddress();
+    MacAddress dstMac = eth.getDestinationMACAddress();
+    Match.Builder mb = sw.getOFFactory().buildMatch();
+    mb.setExact(MatchField.IN_PORT, inPort)
+    .setExact(MatchField.ETH_SRC, srcMac)
+    .setExact(MatchField.ETH_DST, dstMac);
+
+    if (eth.getEtherType() == EthType.IPv4) {
+      IPv4 ipv4 = (IPv4) eth.getPayload();
+      IPv4Address srcIp = ipv4.getSourceAddress();
+      IPv4Address dstIp = ipv4.getDestinationAddress();
+      mb.setExact(MatchField.IPV4_SRC, srcIp);
+      mb.setExact(MatchField.IPV4_DST, dstIp);
+
+      if (ipv4.getProtocol() == IpProtocol.TCP) {
+        TCP tcp = (TCP) ipv4.getPayload();
+        TransportPort srcTcpPort = tcp.getSourcePort();
+        TransportPort dstTcpPort = tcp.getDestinationPort();
+        mb.setExact(MatchField.TCP_SRC, srcTcpPort);
+        mb.setExact(MatchField.TCP_DST, dstTcpPort);
+      } else if (ipv4.getProtocol() == IpProtocol.UDP) {
+        UDP udp = (UDP) ipv4.getPayload();
+        TransportPort srcUdpPort = udp.getSourcePort();
+        TransportPort dstUdpPort = udp.getDestinationPort();
+        mb.setExact(MatchField.UDP_SRC, srcUdpPort);
+        mb.setExact(MatchField.UDP_SRC, srcUdpPort);
+      } else {
+        logger.info("Unhandled ethertype");
+      }
+    }
+
+   if (!vlan.equals(VlanVid.ZERO)) {
+      mb.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(vlan));
+    }
+    logger.info("src mac before return {}",mb.get(MatchField.ETH_SRC));
+    logger.info("dst mac before return {}",mb.get(MatchField.ETH_DST));
+    logger.info("src tcp port before return {}",mb.get(MatchField.TCP_SRC));
+    logger.info("dst tcp port before return {}",mb.get(MatchField.TCP_DST));
+    return mb.build();
+  }
+
 }
