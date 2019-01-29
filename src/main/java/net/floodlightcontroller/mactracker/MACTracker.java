@@ -49,6 +49,7 @@ import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.TransportPort;
 import org.projectfloodlight.openflow.types.IpProtocol;
 import org.projectfloodlight.openflow.types.PacketType;
+import org.projectfloodlight.openflow.types.EthType;
 import org.projectfloodlight.openflow.util.LRULinkedHashMap;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -269,14 +270,17 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
 
       public void dropPort (IOFSwitch sw, Match.Builder mb, OFPort inPort){
          // Match.Builder mb = m.createBuilder();
-          List<OFAction> actions = new ArrayList<>(); // set no action to drop
-          mb.setExact(MatchField.IN_PORT, inPort);
-          //.setExact(MatchField.ETH_DST, m.get(MatchField.ETH_SRC))
-          //.setExact(MatchField.ETH_SRC, m.get(MatchField.ETH_DST));
-         // if (m.get(MatchField.VLAN_VID) != null) {
-          //  mb.setExact(MatchField.VLAN_VID, m.get(MatchField.VLAN_VID));
-          //}
-          this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mb.build(), inPort, 0);
+         Match m = mb.build();
+         Match.Builder mbp = m.createBuilder();
+         mbp.setExact(MatchField.IN_PORT, inPort);
+         if (mb.get(MatchField.VLAN_VID) != null) {
+           mbp.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
+         }
+         mbp.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_SRC));
+         mbp.setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_DST));
+         List<OFAction> actions = new ArrayList<>(); // set no action to drop
+
+         this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mb.build(), inPort, 0);
       }
 
       public void setQos (IOFSwitch sw, Match.Builder mb, OFPort inPort, Level level){
@@ -288,6 +292,17 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
           if (mb.get(MatchField.VLAN_VID) != null) {
             mbp.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
           }
+          mbp.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_SRC));
+          mbp.setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_DST));
+
+          if ((mb.get(MatchField.TCP_SRC)) != null) {
+            mbp.setExact(MatchField.ETH_TYPE, EthType.IPv4);
+            mbp.setExact(MatchField.IP_PROTO, IpProtocol.TCP);
+            mbp.setExact(MatchField.IPV4_SRC, mb.get(MatchField.IPV4_SRC));
+            mbp.setExact(MatchField.IPV4_DST, mb.get(MatchField.IPV4_DST));
+            mbp.setExact(MatchField.TCP_SRC, mb.get(MatchField.TCP_SRC));
+            mbp.setExact(MatchField.TCP_DST, mb.get(MatchField.TCP_DST));
+          }
 
           logger.info("setqos src mac in packet-in {}",mb.get(MatchField.ETH_SRC));
           logger.info("setqos dst mac in packet-in {}",mb.get(MatchField.ETH_DST));
@@ -298,7 +313,6 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
           //logger.info("set qos m dst mac in packet-in {}",m.get(MatchField.ETH_DST));
           //logger.info("set qos m src tcp in packet-in {}",m.get(MatchField.TCP_SRC));
           //logger.info("set qos m dst tcp in packet-in {}",m.get(MatchField.TCP_DST));
-
 
 
           List<OFAction> actions = new ArrayList<>(); // set no action to drop
@@ -420,12 +434,12 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
     fmb.setPriority(MACTracker.FLOWMOD_PRIORITY);
     fmb.setBufferId(bufferId);
     fmb.setOutPort((command == OFFlowModCommand.DELETE) ? OFPort.ANY : outPort);
-    Set<OFFlowModFlags> sfmf = new HashSet<OFFlowModFlags>();
-    if (command != OFFlowModCommand.DELETE) {
-        logger.info("Añadiendo flag SEND_FLOW_REM");
-        sfmf.add(OFFlowModFlags.SEND_FLOW_REM);
-    }
-    fmb.setFlags(sfmf);
+    //Set<OFFlowModFlags> sfmf = new HashSet<OFFlowModFlags>();
+    //if (command != OFFlowModCommand.DELETE) {
+    //    logger.info("Añadiendo flag SEND_FLOW_REM");
+    //    sfmf.add(OFFlowModFlags.SEND_FLOW_REM);
+    //}
+    //fmb.setFlags(sfmf);
 
     // set the ofp_action_header/out actions:
       // from the openflow 1.0 spec: need to set these on a struct ofp_action_output:
@@ -456,7 +470,6 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
        actions.add(setQueue);
        logger.info("Queues OF_13");
    }
-   }
    OFActionOutput output = sw.getOFFactory().actions().buildOutput()
     .setMaxLen(0xFFffFFff)
     .setPort(OFPort.NORMAL)
@@ -464,9 +477,10 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
    actions.add(output);
 
    if (FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG) {
-       Set<OFFlowModFlags> flags = new HashSet<>();
+       Set<OFFlowModFlags> flags = new HashSet<OFFlowModFlags>();
        flags.add(OFFlowModFlags.SEND_FLOW_REM);
        fmb.setFlags(flags);
+   }
    }
 
     FlowModUtils.setActions(fmb, actions, sw);
@@ -514,7 +528,7 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
    * @param vlan The VLAN that the host is on
    */
   protected void removeFromPortMap(IOFSwitch sw, MacAddress mac, VlanVid vlan) {
-    //OFPort portVal = getFromPortMap(sw,mac,vlan);
+    OFPort portVal = getFromPortMap(sw,mac,vlan);
     if (vlan == VlanVid.FULL_MASK) {
       vlan = VlanVid.ofVlan(0);
     }
@@ -527,7 +541,7 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
     }
     printTable(macVlanToSwitchPortMap);
     logger.info("Switch: {} contiene {} MACs after Flow-Remove",sw, (macsPerSwitch(sw)));
-    //logger.info("puerto {} contiene {} MACs after Flow-Remove", portVal, macsPerSwitchPort(sw,portVal));
+    logger.info("puerto {} contiene {} MACs after Flow-Remove", portVal, macsPerSwitchPort(sw,portVal));
   }
 
   /**
