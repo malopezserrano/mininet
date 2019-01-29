@@ -77,6 +77,9 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
       // flow remove
       protected static boolean FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG = true;
 
+      // flow reverse
+      protected static boolean SWITCH_REVERSE_FLOW = false;
+
       // for managing load thresholds
       protected static final int MAX_MACS_PER_SWITCH  = 10;
       protected static final int MAX_MACS_PER_SWITCH_PORT_LOW_OPERATION  = 1;
@@ -281,6 +284,19 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
          List<OFAction> actions = new ArrayList<>(); // set no action to drop
 
          this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mb.build(), inPort, 0);
+
+         //Drop reverse
+         if (SWITCH_REVERSE_FLOW) {
+           OFPort outPort = getFromPortMap(sw, destMac, vlan);
+  				 Match.Builder mbreverse = m.createBuilder();
+  				 mbreverse.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_DST))
+  				 .setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_SRC))
+  				 .setExact(MatchField.IN_PORT, outPort);
+  				 if (mb.get(MatchField.VLAN_VID) != null) {
+  				 	mbreverse.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
+  				 }
+  				this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbreverse.build(), outPort, 0);
+			  }
       }
 
       public void setQos (IOFSwitch sw, Match.Builder mb, OFPort inPort, Level level){
@@ -337,6 +353,28 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
           catch (Exception e) {
               logger.info ("No QoS set for internal traffic");
           }
+
+          //Set QoS reverse
+          if (SWITCH_REVERSE_FLOW) {
+           OFPort outPort = getFromPortMap(sw, destMac, vlan);
+            Match.Builder mbreverse = m.createBuilder();
+            mbreverse.setExact(MatchField.IN_PORT, outPort);
+            if (mb.get(MatchField.VLAN_VID) != null) {
+              mbreverse.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
+            }
+            mbreverse.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_DST));
+            mbreverse.setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_SRC));
+
+            if ((mb.get(MatchField.TCP_SRC)) != null) {
+              mbreverse.setExact(MatchField.ETH_TYPE, EthType.IPv4);
+              mbreverse.setExact(MatchField.IP_PROTO, IpProtocol.TCP);
+              mbreverse.setExact(MatchField.IPV4_SRC, mb.get(MatchField.IPV4_DST));
+              mbreverse.setExact(MatchField.IPV4_DST, mb.get(MatchField.IPV4_SRC));
+              mbreverse.setExact(MatchField.TCP_SRC, mb.get(MatchField.TCP_DST));
+              mbreverse.setExact(MatchField.TCP_DST, mb.get(MatchField.TCP_SRC));
+            }
+            this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbreverse.build(), outPort, queue);
+ 			  }
       }
 
       public APP getApp (TransportPort tcpPort){
