@@ -177,7 +177,6 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
             //Match m = createMatchFromPacket(sw, inPort, cntx);
 
             Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-            //VlanVid vlan = VlanVid.ofVlan(eth.getVlanID());
             VlanVid vlan = VlanVid.ofVlan(eth.getVlanID()) == null ? VlanVid.ZERO : VlanVid.ofVlan(eth.getVlanID());
             MacAddress srcMac = eth.getSourceMACAddress();
             MacAddress dstMac = eth.getDestinationMACAddress();
@@ -287,7 +286,8 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
 
          //Drop reverse
          if (SWITCH_REVERSE_FLOW) {
-           OFPort outPort = getFromPortMap(sw, destMac, vlan);
+           VlanVid vlan = mb.get(MatchField.VLAN_VID) == null ? VlanVid.ZERO : mb.get(MatchField.VLAN_VID).getVlanVid();
+           OFPort outPort = getFromPortMap(sw, mb.get(MatchField.ETH_DST), vlan);
   				 Match.Builder mbreverse = m.createBuilder();
   				 mbreverse.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_DST))
   				 .setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_SRC))
@@ -297,6 +297,7 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
   				 }
   				this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbreverse.build(), outPort, 0);
 			  }
+
       }
 
       public void setQos (IOFSwitch sw, Match.Builder mb, OFPort inPort, Level level){
@@ -356,7 +357,10 @@ public class MACTracker implements IOFMessageListener, IFloodlightModule {
 
           //Set QoS reverse
           if (SWITCH_REVERSE_FLOW) {
-           OFPort outPort = getFromPortMap(sw, destMac, vlan);
+            VlanVid vlan = mb.get(MatchField.VLAN_VID) == null ? VlanVid.ZERO : mb.get(MatchField.VLAN_VID).getVlanVid();
+            logger.info("vlan:{}",vlan);
+            OFPort outPort = getFromPortMap(sw, mb.get(MatchField.ETH_DST), vlan);
+            logger.info("outport:{}",outPort);
             Match.Builder mbreverse = m.createBuilder();
             mbreverse.setExact(MatchField.IN_PORT, outPort);
             if (mb.get(MatchField.VLAN_VID) != null) {
