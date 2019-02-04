@@ -11,16 +11,19 @@ from mininet.link import TCLink
 from mn_wifi.cli import CLI_wifi
 from mn_wifi.net import Mininet_wifi
 
-"""
-sta1 sta2          h1
-  \   /           /
-  ssid1---ap1---s1---gw---h3
-  /   \           \
-sta3 sta4          h2
+"""   sta1 sta2
+        |   |
+     ssid1 ssid2  h1
+         \ /     /
+         ap1---s1---gw---h3
+         / \     \
+     ssid3 ssid4  h2
+        |   |
+      sta3 sta4
 
-vlan2:sta2
-vlan3:sta3
-vlan4:sta1,sta4
+vlan2:ssid2
+vlan3:ssid3
+vlan4:ssid1,ssid4
 """
 
 def topology():
@@ -32,7 +35,7 @@ def topology():
     sta2 = net.addStation( 'sta2', wlans=1, mac='00:00:00:00:00:01', ip="192.168.0.101/24" )
     sta3 = net.addStation( 'sta3', wlans=1, mac='00:00:00:00:00:02', ip="192.168.0.102/24" )
     sta4 = net.addStation( 'sta4', wlans=1, mac='00:00:00:00:00:03', ip="192.168.0.103/24" )
-    ap1 = net.addAccessPoint( 'ap1', ssid="ssid_1", mode="g", channel="1" )
+    ap1 = net.addAccessPoint( 'ap1', vssids=4, ssid='ssid,ssid1,ssid2,ssid3,ssid4', mode="g")
     s1 = net.addSwitch( 's1' )
     h1 = net.addHost( 'h1', ip="192.168.0.200/24", mac="00:00:00:00:01:00" )
     h2 = net.addHost( 'h2', ip="192.168.0.201/24", mac="00:00:00:00:01:01" )
@@ -44,10 +47,6 @@ def topology():
     net.configureWifiNodes()
 
     info("*** Adding Link\n")
-    net.addLink(sta1, ap1)
-    net.addLink(sta2, ap1)
-    net.addLink(sta3, ap1)
-    net.addLink(sta4, ap1)
     net.addLink(ap1, s1, bw=1000000000)
     net.addLink(s1, h1, bw=1000000000)
     net.addLink(s1, h2, bw=1000000000)
@@ -61,6 +60,19 @@ def topology():
     s1.start( [c1] )
 
     sleep(5)
+
+    sta1.cmd('iw dev %s connect %s %s'
+             % (sta1.params['wlan'][0], ap1.params['ssid'][1],
+                ap1.params['mac'][1]))
+    sta2.cmd('iw dev %s connect %s %s'
+             % (sta2.params['wlan'][0], ap1.params['ssid'][2],
+                ap1.params['mac'][2]))
+    sta3.cmd('iw dev %s connect %s %s'
+             % (sta3.params['wlan'][0], ap1.params['ssid'][3],
+                ap1.params['mac'][3]))
+    sta4.cmd('iw dev %s connect %s %s'
+             % (sta4.params['wlan'][0], ap1.params['ssid'][4],
+                ap1.params['mac'][4]))
 
     r1.cmd("ifconfig r1-eth0 0")
     r1.cmd("ifconfig r1-eth1 0")
@@ -77,10 +89,10 @@ def topology():
     s1.cmd("ovs-ofctl add-flow s1 priority=1,arp,actions=flood")
 
     """VLAN TAGGING"""
-    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,nw_src=192.168.0.100,actions=push_vlan:0x8100,set_field:4-\>vlan_vid,output:2")
-    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,nw_src=192.168.0.101,actions=push_vlan:0x8100,set_field:2-\>vlan_vid,output:2")
-    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,nw_src=192.168.0.102,actions=push_vlan:0x8100,set_field:3-\>vlan_vid,output:2")
-    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,nw_src=192.168.0.103,actions=push_vlan:0x8100,set_field:4-\>vlan_vid,output:2")
+    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=2,actions=push_vlan:0x8100,set_field:4-\>vlan_vid,output:6")
+    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=3,actions=push_vlan:0x8100,set_field:2-\>vlan_vid,output:6")
+    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=4,actions=push_vlan:0x8100,set_field:3-\>vlan_vid,output:6")
+    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=5,actions=push_vlan:0x8100,set_field:4-\>vlan_vid,output:6")
 
     """VLAN BASED ROUTING"""
     s1.cmd("ovs-ofctl add-flow s1 priority=65535,ip,dl_vlan=2,nw_dst=192.168.0.200,actions=pop_vlan,output:2")
