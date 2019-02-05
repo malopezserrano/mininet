@@ -80,6 +80,9 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
       // flow reverse
       protected static boolean SWITCH_REVERSE_FLOW = false;
 
+      // disable load regulation
+      protected static boolean DISABLE_LOAD_REGULATION = true;
+
       // for managing load thresholds
       protected static final int MAX_MACS_PER_SWITCH  = 10;
       protected static final int MAX_MACS_PER_SWITCH_PORT_LOW_OPERATION  = 1;
@@ -142,14 +145,17 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
       @Override
       public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
           // TODO Auto-generated method stub
-          floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-	  floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-	  floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
-	  floodlightProvider.addOFMessageListener(OFType.ERROR, this);
+          if (DISABLE_LOAD_REGULATION) { 
+          	floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+	  	floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+	  	floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
+	  	floodlightProvider.addOFMessageListener(OFType.ERROR, this);
+	  }	
       }
 
       @Override
       public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
+        if (DISABLE_LOAD_REGULATION) {
         switch (msg.getType()) {
         case PACKET_IN:
           return this.processPacketInMessage(sw, (OFPacketIn) msg, cntx);
@@ -163,6 +169,8 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
           logger.error("received an unexpected message {} from switch {}", msg, sw);
           return Command.CONTINUE;
         }
+        }
+        return Command.CONTINUE;
       }
 
   private Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx) {

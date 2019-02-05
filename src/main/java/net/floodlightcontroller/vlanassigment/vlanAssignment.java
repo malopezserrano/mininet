@@ -38,6 +38,8 @@ import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.action.OFActionSetQueue;
 import org.projectfloodlight.openflow.protocol.action.OFActionEnqueue;
 import org.projectfloodlight.openflow.protocol.action.OFActionOutput;
+import org.projectfloodlight.openflow.protocol.action.OFActionPushVlan;
+import org.projectfloodlight.openflow.protocol.action.OFActionSetVlanVid;
 import org.projectfloodlight.openflow.protocol.OFFactories;
 import org.projectfloodlight.openflow.protocol.OFFactory;
 import org.projectfloodlight.openflow.protocol.instruction.OFInstruction;
@@ -70,7 +72,7 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       public static final long LEARNING_SWITCH_COOKIE = (long) (LEARNING_SWITCH_APP_ID & ((1 << APP_ID_BITS) - 1)) << APP_ID_SHIFT;
 
       // more flow-mod defaults
-      protected static short FLOWMOD_DEFAULT_IDLE_TIMEOUT = 5; // in seconds
+      protected static short FLOWMOD_DEFAULT_IDLE_TIMEOUT = 500; // in seconds
       protected static short FLOWMOD_DEFAULT_HARD_TIMEOUT = 0; // infinite
       protected static short FLOWMOD_PRIORITY = 100;
 
@@ -147,7 +149,7 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
 
       @Override
       public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
-        if (sw.getId().equals()) {
+        if (sw.getId().equals(DatapathId.of("10:00:00:00:00:00:00:01"))) {
           logger.error("vlanAssignment is not executed for switch {}", sw);
           return Command.CONTINUE;
         } else {
@@ -207,32 +209,36 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
         return Command.CONTINUE;
       }
 
-      public void setFlowVlan (IOFSwitch sw, Match.Builder mb, OFPort inPort, Level level){
+      public void setFlowVlan (IOFSwitch sw, Match.Builder mb, OFPort inPort){
           Match m = mb.build();
           Match.Builder mbp = m.createBuilder();
           mbp.setExact(MatchField.IN_PORT, inPort);
-
-          switch (inPort) {
+          VlanVid vlanVid = VlanVid.ZERO;
+          switch (inPort.getPortNumber()) {
             case 2:
-              logger.info("Packet-in AP LOW level");
-              mbp.setExact(MatchField.VLAN_VID, 4);
+              logger.info("Vlan 4 para puerto 2");
+              vlanVid = VlanVid.ofVlan(4);
+              mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(4)));
               break;
             case 3:
-              logger.info("Packet-in AP HIGH level");
-              mbp.setExact(MatchField.VLAN_VID, 2);
+              logger.info("Vlan 2 para puerto 3");
+              vlanVid = VlanVid.ofVlan(2);
+              mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(2)));
               break;
             case 4:
-              logger.info("Packet-in AP CRITICAL level");
-              mbp.setExact(MatchField.VLAN_VID, 3);
+              logger.info("Vlan 3 para puerto 4");
+              vlanVid = VlanVid.ofVlan(3);
+              mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(3)));
               break;
             case 5:
-              logger.info("Packet-in AP CRITICAL level");
-              mbp.setExact(MatchField.VLAN_VID, 4);
+              logger.info("Vlan 4 para puerto 4");
+              vlanVid = VlanVid.ofVlan(4);
+              mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(4)));
               break;
           }
 
           mbp.setExact(MatchField.ETH_TYPE, EthType.IPv4);
-          this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort);
+          this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
       }
 
   /**
@@ -247,6 +253,8 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
           return Command.CONTINUE;
       }
       logger.trace("{} flow entry removed {}", sw, flowRemovedMessage);
+      Match match = flowRemovedMessage.getMatch();
+      OFPort inPort = match.get(MatchField.IN_PORT); 
 
       Match.Builder mb = sw.getOFFactory().buildMatch();
       setFlowVlan (sw, mb, inPort);
@@ -281,18 +289,27 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
     ArrayList<OFAction> actions = new ArrayList<OFAction>();
 
     OFActionPushVlan setVlanPush = sw.getOFFactory().actions().buildPushVlan()
-      .pushVlan(EthType.VLAN_FRAME)
+      //.pushVlan(EthType.VLAN_FRAME)
+      .setEthertype(EthType.VLAN_FRAME)
       .build();
     actions.add(setVlanPush);
 
-    OFActionSetVlanVid setVlanId = sw.getOFFactory().actions().buildSetVlanVid()
+  /*  OFActionSetVlanVid setVlanId = sw.getOFFactory().actions().buildSetVlanVid()
       .setVlanVid(vlanVid)
       .build();
     actions.add(setVlanId);
+*/
+
+	OFActionSetVlanVid.Builder ab = OFFactories.getFactory(OFVersion.OF_10).actions().buildSetVlanVid();
+	ab.setVlanVid(vlanVid);
+	logger.debug("action {}", ab.build());
+	actions.add(ab.build());
+
+
 
     OFActionOutput output = sw.getOFFactory().actions().buildOutput()
       .setMaxLen(0xFFffFFff)
-      .setPort(6)
+      .setPort(OFPort.of(6))
       .build();
     actions.add(output);
 
