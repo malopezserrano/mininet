@@ -91,6 +91,8 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       protected Set macAddresses;
       protected static Logger logger;
 
+      DatapathId switch1 = DatapathId.of("10:00:00:00:00:00:00:01");
+
   @Override
       public String getName() {
           // TODO Auto-generated method stub
@@ -149,7 +151,7 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
 
       @Override
       public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
-        if (sw.getId().equals(DatapathId.of("10:00:00:00:00:00:00:01"))) {
+        if (sw.getId().equals(switch1)) {
           logger.error("vlanAssignment is not executed for switch {}", sw);
           return Command.CONTINUE;
         } else {
@@ -254,7 +256,7 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       }
       logger.trace("{} flow entry removed {}", sw, flowRemovedMessage);
       Match match = flowRemovedMessage.getMatch();
-      OFPort inPort = match.get(MatchField.IN_PORT); 
+      OFPort inPort = match.get(MatchField.IN_PORT);
 
       Match.Builder mb = sw.getOFFactory().buildMatch();
       setFlowVlan (sw, mb, inPort);
@@ -294,18 +296,16 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       .build();
     actions.add(setVlanPush);
 
-  /*  OFActionSetVlanVid setVlanId = sw.getOFFactory().actions().buildSetVlanVid()
+/*  OFActionSetVlanVid setVlanId = sw.getOFFactory().actions().buildSetVlanVid()
       .setVlanVid(vlanVid)
       .build();
     actions.add(setVlanId);
 */
 
-	OFActionSetVlanVid.Builder ab = OFFactories.getFactory(OFVersion.OF_10).actions().buildSetVlanVid();
-	ab.setVlanVid(vlanVid);
-	logger.debug("action {}", ab.build());
-	actions.add(ab.build());
-
-
+  	OFActionSetVlanVid.Builder ab = OFFactories.getFactory(OFVersion.OF_10).actions().buildSetVlanVid();
+  	ab.setVlanVid(vlanVid);
+  	logger.debug("action {}", ab.build());
+  	actions.add(ab.build());
 
     OFActionOutput output = sw.getOFFactory().actions().buildOutput()
       .setMaxLen(0xFFffFFff)
