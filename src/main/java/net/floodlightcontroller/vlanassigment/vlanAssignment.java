@@ -91,7 +91,7 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       protected Set macAddresses;
       protected static Logger logger;
 
-      DatapathId switch1 = DatapathId.of("10:00:00:00:00:00:00:01");
+      DatapathId switch1 = DatapathId.of("00:00:00:00:00:00:00:01");
 
   @Override
       public String getName() {
@@ -144,9 +144,9 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
           // TODO Auto-generated method stub
           floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-	        floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-	        floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
-	        floodlightProvider.addOFMessageListener(OFType.ERROR, this);
+	  floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+	  floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
+	  floodlightProvider.addOFMessageListener(OFType.ERROR, this);
       }
 
       @Override
@@ -192,9 +192,9 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
 	          .setExact(MatchField.ETH_SRC, srcMac)
 	          .setExact(MatchField.ETH_DST, dstMac);
 
-        	  if (!vlan.equals(VlanVid.ZERO)) {
-        	    mb.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(vlan));
-        	  }
+        	 // if (!vlan.equals(VlanVid.ZERO)) {
+        	 //   mb.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(vlan));
+        	 // }
 
             if (srcMac == null) {
                srcMac = MacAddress.NONE;
@@ -216,26 +216,27 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
           Match.Builder mbp = m.createBuilder();
           mbp.setExact(MatchField.IN_PORT, inPort);
           VlanVid vlanVid = VlanVid.ZERO;
+          logger.info("IN PORT {} SELECCION DE VLAN",inPort.getPortNumber());
           switch (inPort.getPortNumber()) {
             case 2:
-              logger.info("Vlan 4 para puerto 2");
+              logger.info("Vlan selected 4 for in-port 2");
               vlanVid = VlanVid.ofVlan(4);
-              mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(4)));
+              //mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(4)));
               break;
             case 3:
-              logger.info("Vlan 2 para puerto 3");
+              logger.info("Vlan selected 2 for in-port 3");
               vlanVid = VlanVid.ofVlan(2);
-              mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(2)));
+              //mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(2)));
               break;
             case 4:
-              logger.info("Vlan 3 para puerto 4");
+              logger.info("Vlan selected 3 for in-port 4");
               vlanVid = VlanVid.ofVlan(3);
-              mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(3)));
+              //mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(3)));
               break;
             case 5:
-              logger.info("Vlan 4 para puerto 4");
+              logger.info("Vlan selected 4 for in-port 5");
               vlanVid = VlanVid.ofVlan(4);
-              mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(4)));
+              //mbp.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(VlanVid.ofVlan(4)));
               break;
           }
 

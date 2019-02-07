@@ -89,11 +89,11 @@ def topology():
     s1.cmd("ovs-ofctl add-flow s1 priority=1,arp,actions=flood")
 
     """VLAN TAGGING"""
-    ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=2,actions=push_vlan:0x8100,set_field:4-\>vlan_vid,output:6")
+    """ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=2,actions=push_vlan:0x8100,set_field:4-\>vlan_vid,output:6")
     ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=3,actions=push_vlan:0x8100,set_field:2-\>vlan_vid,output:6")
     ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=4,actions=push_vlan:0x8100,set_field:3-\>vlan_vid,output:6")
     ap1.cmd("ovs-ofctl -O OpenFlow11 add-flow ap1 priority=65535,ip,dl_type=0x0800,in_port=5,actions=push_vlan:0x8100,set_field:4-\>vlan_vid,output:6")
-
+    """
     """VLAN BASED ROUTING"""
     s1.cmd("ovs-ofctl add-flow s1 priority=65535,ip,dl_vlan=2,nw_dst=192.168.0.200,actions=pop_vlan,output:2")
     s1.cmd("ovs-ofctl add-flow s1 priority=65535,ip,dl_vlan=3,nw_dst=192.168.0.201,actions=pop_vlan,output:3")
