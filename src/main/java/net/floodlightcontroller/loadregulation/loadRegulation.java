@@ -38,6 +38,8 @@ import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.action.OFActionSetQueue;
 import org.projectfloodlight.openflow.protocol.action.OFActionEnqueue;
 import org.projectfloodlight.openflow.protocol.action.OFActionOutput;
+import org.projectfloodlight.openflow.protocol.action.OFActionPushVlan;
+import org.projectfloodlight.openflow.protocol.action.OFActionSetVlanVid;
 import org.projectfloodlight.openflow.protocol.OFFactories;
 import org.projectfloodlight.openflow.protocol.OFFactory;
 import org.projectfloodlight.openflow.protocol.instruction.OFInstruction;
@@ -70,18 +72,12 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
       public static final long LEARNING_SWITCH_COOKIE = (long) (LEARNING_SWITCH_APP_ID & ((1 << APP_ID_BITS) - 1)) << APP_ID_SHIFT;
 
       // more flow-mod defaults
-      protected static short FLOWMOD_DEFAULT_IDLE_TIMEOUT = 5; // in seconds
+      protected static short FLOWMOD_DEFAULT_IDLE_TIMEOUT = 100; // in seconds
       protected static short FLOWMOD_DEFAULT_HARD_TIMEOUT = 0; // infinite
       protected static short FLOWMOD_PRIORITY = 100;
 
       // flow remove
       protected static boolean FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG = true;
-
-      // flow reverse
-      protected static boolean SWITCH_REVERSE_FLOW = false;
-
-      // disable load regulation
-      protected static boolean DISABLE_LOAD_REGULATION = true;
 
       // for managing load thresholds
       protected static final int MAX_MACS_PER_SWITCH  = 10;
@@ -89,11 +85,14 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
       protected static final int MAX_MACS_PER_SWITCH_PORT_HIGH_OPERATION  = 2;
       protected static final int MAX_MACS_PER_SWITCH_PORT_CRITICAL_OPERATION  = 3;
       protected enum Level {LOW, HIGH, CRITICAL};
-      protected enum APP {WEB, STREAMING, UNKNOWN};
+      protected static boolean ENABLE_LOAD_REGULATION = true;
 
       protected IFloodlightProviderService floodlightProvider;
       protected Set macAddresses;
       protected static Logger logger;
+
+      DatapathId switch1 = DatapathId.of("00:00:00:00:00:00:00:01");
+      DatapathId ap1 = DatapathId.of("10:00:00:00:00:00:00:01");
 
   @Override
       public String getName() {
@@ -145,32 +144,34 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
       @Override
       public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
           // TODO Auto-generated method stub
-          if (DISABLE_LOAD_REGULATION) { 
-          	floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-	  	floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-	  	floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
-	  	floodlightProvider.addOFMessageListener(OFType.ERROR, this);
-	  }	
+          if (ENABLE_LOAD_REGULATION) {
+	  floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+	  floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
+	  floodlightProvider.addOFMessageListener(OFType.ERROR, this);
+          }
       }
 
       @Override
       public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
-        if (DISABLE_LOAD_REGULATION) {
-        switch (msg.getType()) {
-        case PACKET_IN:
-          return this.processPacketInMessage(sw, (OFPacketIn) msg, cntx);
-        case FLOW_REMOVED:
-      logger.info("received a flow-removed {} from switch {}", msg, sw);
-          return this.processFlowRemovedMessage(sw, (OFFlowRemoved) msg);
-        case ERROR:
-          logger.info("received an error {} from switch {}", msg, sw);
+        if (sw.getId().equals(switch1)) {
+          logger.error("loadRegulation is not executed for switch {}", sw);
           return Command.CONTINUE;
-        default:
-          logger.error("received an unexpected message {} from switch {}", msg, sw);
-          return Command.CONTINUE;
-        }
-        }
-        return Command.CONTINUE;
+        } else {
+          switch (msg.getType()) {
+            case PACKET_IN:
+              logger.info("received a packet-in {} from switch {}", msg, sw);
+              return this.processPacketInMessage(sw, (OFPacketIn) msg, cntx);
+            case FLOW_REMOVED:
+              logger.info("received a flow-removed {} from switch {}", msg, sw);
+              return this.processFlowRemovedMessage(sw, (OFFlowRemoved) msg);
+            case ERROR:
+              logger.info("received an error {} from switch {}", msg, sw);
+              return Command.CONTINUE;
+            default:
+              logger.error("received an unexpected message {} from switch {}", msg, sw);
+              return Command.CONTINUE;
+          }
+          }
       }
 
   private Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx) {
@@ -182,7 +183,6 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
           } else {
             logger.info("packet-in received from wirelesss interface on switch {}", sw);
             /* Read packet header attributes into Match */
-            //Match m = createMatchFromPacket(sw, inPort, cntx);
 
             Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
             VlanVid vlan = VlanVid.ofVlan(eth.getVlanID()) == null ? VlanVid.ZERO : VlanVid.ofVlan(eth.getVlanID());
@@ -194,15 +194,6 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
 	          .setExact(MatchField.ETH_SRC, srcMac)
 	          .setExact(MatchField.ETH_DST, dstMac);
 
-        	  if (!vlan.equals(VlanVid.ZERO)) {
-        	    mb.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(vlan));
-        	  }
-
-            TransportPort srcTcpPort;
-            srcTcpPort = TransportPort.of(0);
-            TransportPort dstTcpPort;
-            dstTcpPort = TransportPort.of(0);
-
             if (srcMac == null) {
                srcMac = MacAddress.NONE;
             }
@@ -213,200 +204,133 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
                vlan = VlanVid.ZERO;
             }
 
-            if (eth.getEtherType() == EthType.IPv4) {
-              IPv4 ipv4 = (IPv4) eth.getPayload();
-              IPv4Address srcIp = ipv4.getSourceAddress();
-              IPv4Address dstIp = ipv4.getDestinationAddress();
-              mb.setExact(MatchField.IPV4_SRC, srcIp);
-              mb.setExact(MatchField.IPV4_DST, dstIp);
-              if (ipv4.getProtocol() == IpProtocol.TCP) {
-                TCP tcp = (TCP) ipv4.getPayload();
-                srcTcpPort = tcp.getSourcePort();
-                dstTcpPort = tcp.getDestinationPort();
-                mb.setExact(MatchField.TCP_SRC, srcTcpPort);
-                mb.setExact(MatchField.TCP_DST, dstTcpPort);
-            } else if (ipv4.getProtocol() == IpProtocol.UDP) {
-                UDP udp = (UDP) ipv4.getPayload();
-                TransportPort srcUdpPort = udp.getSourcePort();
-                TransportPort dstUdpPort = udp.getDestinationPort();
-                mb.setExact(MatchField.UDP_SRC, srcUdpPort);
-                mb.setExact(MatchField.UDP_SRC, srcUdpPort);
-            } else {
-               logger.info("Unhandled ethertype");
-            }
-            }
-
-            Match m = mb.build();
-
-            /*logger.info("mb src mac in packet-in {}",mb.get(MatchField.ETH_SRC));
-            logger.info("mb dst mac in packet-in {}",mb.get(MatchField.ETH_DST));
-            logger.info("mb src tcp in packet-in {}",mb.get(MatchField.TCP_SRC));
-            logger.info("mb dst tcp in packet-in {}",mb.get(MatchField.TCP_DST));*/
-
             if ((srcMac.getLong() & 0x010000000000L) == 0) {
             // If source MAC is a unicast address, learn the port for this MAC/VLAN
+            logger.info("Añado MAC {} a switch {}", srcMac, sw);
             this.addToPortMap(sw, srcMac, vlan, inPort);
             }
 
-            // Add flow table entry matching source MAC, dest MAC, VLAN and input port
-            // that sends to the port we previously learned for the dest MAC/VLAN.  Also
-            // add a flow table entry with source and destination MACs reversed, and
-            // input and output ports reversed.  When either entry expires due to idle
-            // timeout, remove the other one.  This ensures that if a device moves to
-            // a different port, a constant stream of packets headed to the device at
-            // its former location does not keep the stale entry alive forever.
-            // FIXME: current HP switches ignore DL_SRC and DL_DST fields, so we have to match on
-            // NW_SRC and NW_DST as well
-            // We write FlowMods with Buffer ID none then explicitly PacketOut the buffered packet
-
-            switch (getAPLoadLevel(sw, inPort)) {
-              case LOW:
-                logger.info("Packet-in AP LOW level");
-                setQos(sw,mb,inPort,Level.LOW);
-                break;
-              case HIGH:
-                logger.info("Packet-in AP HIGH level");
-                setQos(sw,mb,inPort,Level.HIGH);
-                break;
-              case CRITICAL:
-                logger.info("Packet-in AP CRITICAL level");
-                dropPort(sw,mb,inPort);
-                break;
-            }
+            setFlow (sw, mb, inPort);
         }
         return Command.CONTINUE;
       }
 
-
-      public void dropPort (IOFSwitch sw, Match.Builder mb, OFPort inPort){
-         // Match.Builder mb = m.createBuilder();
-         Match m = mb.build();
-         Match.Builder mbp = m.createBuilder();
-         mbp.setExact(MatchField.IN_PORT, inPort);
-         if (mb.get(MatchField.VLAN_VID) != null) {
-           mbp.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
-         }
-         mbp.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_SRC));
-         mbp.setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_DST));
-         List<OFAction> actions = new ArrayList<>(); // set no action to drop
-
-         this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mb.build(), inPort, 0);
-
-         //Drop reverse
-         if (SWITCH_REVERSE_FLOW) {
-           VlanVid vlan = mb.get(MatchField.VLAN_VID) == null ? VlanVid.ZERO : mb.get(MatchField.VLAN_VID).getVlanVid();
-           OFPort outPort = getFromPortMap(sw, mb.get(MatchField.ETH_DST), vlan);
-  				 Match.Builder mbreverse = m.createBuilder();
-  				 mbreverse.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_DST))
-  				 .setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_SRC))
-  				 .setExact(MatchField.IN_PORT, outPort);
-  				 if (mb.get(MatchField.VLAN_VID) != null) {
-  				 	mbreverse.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
-  				 }
-  				this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbreverse.build(), outPort, 0);
-			  }
-
-      }
-
-      public void setQos (IOFSwitch sw, Match.Builder mb, OFPort inPort, Level level){
-          int queue = 0;
-
+      public void setFlow (IOFSwitch sw, Match.Builder mb, OFPort inPort){
           Match m = mb.build();
           Match.Builder mbp = m.createBuilder();
           mbp.setExact(MatchField.IN_PORT, inPort);
-          if (mb.get(MatchField.VLAN_VID) != null) {
-            mbp.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
-          }
           mbp.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_SRC));
-          mbp.setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_DST));
+          VlanVid vlanVid = VlanVid.ZERO;
+          //logger.info("IN PORT {} SELECCION DE VLAN",inPort.getPortNumber());
+          mbp.setExact(MatchField.ETH_TYPE, EthType.IPv4);
 
-          if ((mb.get(MatchField.TCP_SRC)) != null) {
-            mbp.setExact(MatchField.ETH_TYPE, EthType.IPv4);
-            mbp.setExact(MatchField.IP_PROTO, IpProtocol.TCP);
-            mbp.setExact(MatchField.IPV4_SRC, mb.get(MatchField.IPV4_SRC));
-            mbp.setExact(MatchField.IPV4_DST, mb.get(MatchField.IPV4_DST));
-            mbp.setExact(MatchField.TCP_SRC, mb.get(MatchField.TCP_SRC));
-            mbp.setExact(MatchField.TCP_DST, mb.get(MatchField.TCP_DST));
-          }
+switch (inPort.getPortNumber()) {
+  case 2:
+  switch (getAPLoadLevel(sw, inPort)) {
+    case LOW:
+      logger.info("LOW level Vlan selected 4 for in-port 2");
+      vlanVid = VlanVid.ofVlan(4);
+      this.writeFlowModVlan(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
+      break;
+    case HIGH:
+      logger.info("HIGH level Drop traffic for in-port 2");
+      this.writeFlowModDrop(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort);
+      break;
+    case CRITICAL:
+      logger.info("CRITICAL level Drop traffic for in-port 2");
+      this.writeFlowModDrop(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort);
+      break;
+  }
+    break;
+  case 3:
+  switch (getAPLoadLevel(sw, inPort)) {
+    case LOW:
+      logger.info("LOW level Vlan selected 2 for in-port 3");
+      vlanVid = VlanVid.ofVlan(2);
+      this.writeFlowModVlan(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
+      break;
+    case HIGH:
+      logger.info("HIGH level Vlan selected 3 for in-port 3");
+      vlanVid = VlanVid.ofVlan(3);
+      this.writeFlowModVlan(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
+      break;
+    case CRITICAL:
+      logger.info("CRITICAL level Drop traffic for in-port 3");
+      this.writeFlowModDrop(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort);
+      break;
+  }
+    break;
+  case 4:
+  switch (getAPLoadLevel(sw, inPort)) {
+    case LOW:
+      logger.info("LOW level Vlan selected 3 for in-port 4");
+      vlanVid = VlanVid.ofVlan(3);
+      this.writeFlowModVlan(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
+      break;
+    case HIGH:
+      logger.info("HIGH level Vlan selected 4 for in-port 4");
+      vlanVid = VlanVid.ofVlan(4);
+      this.writeFlowModVlan(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
+      break;
+    case CRITICAL:
+      logger.info("CRITICAL level Drop traffic for in-port 4");
+      this.writeFlowModDrop(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort);
+      break;
+  }
+    break;
+  case 5:
+  switch (getAPLoadLevel(sw, inPort)) {
+    case LOW:
+      logger.info("LOW level Vlan selected 4 for in-port 5");
+      vlanVid = VlanVid.ofVlan(4);
+      this.writeFlowModVlan(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
+      break;
+    case HIGH:
+      logger.info("HIGH level Drop traffic for in-port 5");
+      this.writeFlowModDrop(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort);
+      break;
+    case CRITICAL:
+      logger.info("CRITICAL level Drop traffic for in-port 5");
+      this.writeFlowModDrop(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort);
+      break;
+  }
+    break;
+}
 
-          logger.info("setqos src mac in packet-in {}",mb.get(MatchField.ETH_SRC));
-          logger.info("setqos dst mac in packet-in {}",mb.get(MatchField.ETH_DST));
-          logger.info("setqos src tcp in packet-in {}",mb.get(MatchField.TCP_SRC));
-          logger.info("setqos dst tcp in packet-in {}",mb.get(MatchField.TCP_DST));
 
-          //logger.info("set qos m src mac in packet-in {}",m.get(MatchField.ETH_SRC));
-          //logger.info("set qos m dst mac in packet-in {}",m.get(MatchField.ETH_DST));
-          //logger.info("set qos m src tcp in packet-in {}",m.get(MatchField.TCP_SRC));
-          //logger.info("set qos m dst tcp in packet-in {}",m.get(MatchField.TCP_DST));
-
-
-          List<OFAction> actions = new ArrayList<>(); // set no action to drop
-          try {
-          switch (getApp(mb.get(MatchField.TCP_DST))) {
-            case WEB:
-              logger.info ("Selection QoS for WEB");
-              if (level==Level.LOW) {queue=4;} else {queue=3;}
+/*
+          switch (inPort.getPortNumber()) {
+            case 2:
+              logger.info("Vlan selected 4 for in-port 2");
+              vlanVid = VlanVid.ofVlan(4);
               break;
-            case STREAMING:
-              logger.info ("Selection QoS for STREAMING");
-              if (level==Level.LOW) {queue=6;} else {queue=5;}
+            case 3:
+              if (getAPLoadLevel(sw, inPort) == Level.LOW) {
+                logger.info("LOW level Vlan selected 2 for in-port 3");
+                vlanVid = VlanVid.ofVlan(2);
+              } else if {
+                logger.info("HIGH/CRITICAL level Vlan selected 3 for in-port 3");
+                vlanVid = VlanVid.ofVlan(3); 
+              }
               break;
-            case UNKNOWN:
-              logger.info ("Selection QoS for UNKNOWN");
-              if (level==Level.LOW) {queue=2;} else {queue=1;}
+            case 4:
+              if (getAPLoadLevel(sw, inPort) == Level.LOW) {
+                logger.info("LOW level Vlan selected 3 for in-port 4");
+                vlanVid = VlanVid.ofVlan(3);
+              } else {
+                logger.info("HIGH/CRITICAL level Vlan selected 4 for in-port 4");
+                vlanVid = VlanVid.ofVlan(4);
+              }
+              break;
+            case 5:
+              logger.info("Vlan selected 4 for in-port 5");
+              vlanVid = VlanVid.ofVlan(4);
               break;
           }
-          logger.info ("Queue selected {}", queue);
-          this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, queue);
-          }
-          catch (Exception e) {
-              logger.info ("No QoS set for internal traffic");
-          }
-
-          //Set QoS reverse
-          if (SWITCH_REVERSE_FLOW) {
-            VlanVid vlan = mb.get(MatchField.VLAN_VID) == null ? VlanVid.ZERO : mb.get(MatchField.VLAN_VID).getVlanVid();
-            logger.info("vlan:{}",vlan);
-            OFPort outPort = getFromPortMap(sw, mb.get(MatchField.ETH_DST), vlan);
-            logger.info("outport:{}",outPort);
-            Match.Builder mbreverse = m.createBuilder();
-            mbreverse.setExact(MatchField.IN_PORT, outPort);
-            if (mb.get(MatchField.VLAN_VID) != null) {
-              mbreverse.setExact(MatchField.VLAN_VID, mb.get(MatchField.VLAN_VID));
-            }
-            mbreverse.setExact(MatchField.ETH_SRC, mb.get(MatchField.ETH_DST));
-            mbreverse.setExact(MatchField.ETH_DST, mb.get(MatchField.ETH_SRC));
-
-            if ((mb.get(MatchField.TCP_SRC)) != null) {
-              mbreverse.setExact(MatchField.ETH_TYPE, EthType.IPv4);
-              mbreverse.setExact(MatchField.IP_PROTO, IpProtocol.TCP);
-              mbreverse.setExact(MatchField.IPV4_SRC, mb.get(MatchField.IPV4_DST));
-              mbreverse.setExact(MatchField.IPV4_DST, mb.get(MatchField.IPV4_SRC));
-              mbreverse.setExact(MatchField.TCP_SRC, mb.get(MatchField.TCP_DST));
-              mbreverse.setExact(MatchField.TCP_DST, mb.get(MatchField.TCP_SRC));
-            }
-            this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbreverse.build(), outPort, queue);
- 			  }
+*/
+          //mbp.setExact(MatchField.ETH_TYPE, EthType.IPv4);
+          //this.writeFlowModVlan(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
       }
-
-      public APP getApp (TransportPort tcpPort){
-          APP app;
-          logger.info ("Application based on port {}",tcpPort);
-          switch (tcpPort.toString()) {
-            case "80":
-              app=APP.WEB;
-              break;
-            case "5001":
-              app=APP.STREAMING;
-              break;
-            default:
-              app=APP.UNKNOWN;
-              break;
-          }
-          logger.info ("Application returned {}",app);
-          return app;
-      }
-
 
   /**
    * Processes a flow removed message. We will delete the learned MAC/VLAN mapping from
@@ -421,21 +345,20 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
       }
       logger.trace("{} flow entry removed {}", sw, flowRemovedMessage);
       Match match = flowRemovedMessage.getMatch();
-      // When a flow entry expires, it means the device with the matching source
-      // MAC address and VLAN either stopped sending packets or moved to a different
-      // port.  If the device moved, we can't know where it went until it sends
-      // another packet, allowing us to re-learn its port.  Meanwhile we remove
-      // it from the macVlanToPortMap to revert to flooding packets to this device.
+      OFPort inPort = match.get(MatchField.IN_PORT);
+
+      if (match.get(MatchField.ETH_SRC)== null) {
+          logger.info("Flow remove sin MAC"); 
+          return Command.CONTINUE;
+      } else {
       this.removeFromPortMap(sw, match.get(MatchField.ETH_SRC),
           match.get(MatchField.VLAN_VID) == null
           ? VlanVid.ZERO
           : match.get(MatchField.VLAN_VID).getVlanVid());
 
-      // Also, if packets keep coming from another device (e.g. from ping), the
-      // corresponding reverse flow entry will never expire on its own and will
-      // send the packets to the wrong port (the matching input port of the
-      // expired flow entry), so we must delete the reverse entry explicitly.
-
+      //Match.Builder mb = sw.getOFFactory().buildMatch();
+      //setFlow (sw, mb, inPort);
+      }
       return Command.CONTINUE;
   }
 
@@ -447,29 +370,7 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
    * @param match The OFMatch structure to write.
    * @param outPort The switch port to output it to.
    */
-  private void writeFlowMod(IOFSwitch sw, OFFlowModCommand command, OFBufferId bufferId, Match match, OFPort outPort, int queue) {
-  // from openflow 1.0 spec - need to set these on a struct ofp_flow_mod:
-  // struct ofp_flow_mod {
-  //    struct ofp_header header;
-  //    struct ofp_match match; /* Fields to match */
-  //    uint64_t cookie; /* Opaque controller-issued identifier. */
-  //
-  //    /* Flow actions. */
-  //    uint16_t command; /* One of OFPFC_*. */
-  //    uint16_t idle_timeout; /* Idle time before discarding (seconds). */
-  //    uint16_t hard_timeout; /* Max time before discarding (seconds). */
-  //    uint16_t priority; /* Priority level of flow entry. */
-  //    uint32_t buffer_id; /* Buffered packet to apply to (or -1).
-  //                           Not meaningful for OFPFC_DELETE*. */
-  //    uint16_t out_port; /* For OFPFC_DELETE* commands, require
-  //                          matching entries to include this as an
-  //                          output port. A value of OFPP_NONE
-  //                          indicates no restriction. */
-  //    uint16_t flags; /* One of OFPFF_*. */
-  //    struct ofp_action_header actions[0]; /* The action length is inferred
-  //                                            from the length field in the
-  //                                            header. */
-  //    };
+  private void writeFlowModVlan(IOFSwitch sw, OFFlowModCommand command, OFBufferId bufferId, Match match, OFPort outPort, VlanVid vlanVid) {
 
     OFFlowMod.Builder fmb;
     if (command == OFFlowModCommand.DELETE) {
@@ -484,63 +385,155 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
     fmb.setPriority(loadRegulation.FLOWMOD_PRIORITY);
     fmb.setBufferId(bufferId);
     fmb.setOutPort((command == OFFlowModCommand.DELETE) ? OFPort.ANY : outPort);
-    //Set<OFFlowModFlags> sfmf = new HashSet<OFFlowModFlags>();
-    //if (command != OFFlowModCommand.DELETE) {
-    //    logger.info("Añadiendo flag SEND_FLOW_REM");
-    //    sfmf.add(OFFlowModFlags.SEND_FLOW_REM);
-    //}
-    //fmb.setFlags(sfmf);
 
-    // set the ofp_action_header/out actions:
-      // from the openflow 1.0 spec: need to set these on a struct ofp_action_output:
-    // uint16_t type; /* OFPAT_OUTPUT. */
-    // uint16_t len; /* Length is 8. */
-    // uint16_t port; /* Output port. */
-    // uint16_t max_len; /* Max length to send to controller. */
-    // type/len are set because it is OFActionOutput,
-    // and port, max_len are arguments to this constructor
-    //al.add(sw.getOFFactory().actions().buildOutput().setPort(outPort).setMaxLen(0xffFFffFF).build());
-   ArrayList<OFAction> actions = new ArrayList<OFAction>();
-   //actions.add(sw.getOFFactory().actions().buildOutput().setPort(outPort).setMaxLen(0xffFFffFF).build());
+    ArrayList<OFAction> actions = new ArrayList<OFAction>();
 
-   if (queue>0) {
-   //List<OFAction> al = new ArrayList<OFAction>();
-   /* For OpenFlow 1.0 */
-   if (sw.getOFFactory().getVersion().compareTo(OFVersion.OF_10) == 0) {
-       OFActionEnqueue enqueue = sw.getOFFactory().actions().buildEnqueue()
-        .setPort(OFPort.of(2)) /* Must specify port number */
-        .setQueueId(queue)
-        .build();
-       actions.add(enqueue);
-       logger.info("Queues OF_10");
-   } else { /* For OpenFlow 1.1+ */
-       OFActionSetQueue setQueue = sw.getOFFactory().actions().buildSetQueue()
-        .setQueueId(queue)
-        .build();
-       actions.add(setQueue);
-       logger.info("Queues OF_13");
-   }
-   OFActionOutput output = sw.getOFFactory().actions().buildOutput()
-    .setMaxLen(0xFFffFFff)
-    .setPort(OFPort.NORMAL)
-    .build();
-   actions.add(output);
+    OFActionPushVlan setVlanPush = sw.getOFFactory().actions().buildPushVlan()
+      .setEthertype(EthType.VLAN_FRAME)
+      .build();
+    actions.add(setVlanPush);
+
+  	OFActionSetVlanVid.Builder ab = OFFactories.getFactory(OFVersion.OF_10).actions().buildSetVlanVid();
+  	ab.setVlanVid(vlanVid);
+  	logger.debug("action {}", ab.build());
+  	actions.add(ab.build());
+
+    OFActionOutput output = sw.getOFFactory().actions().buildOutput()
+      .setMaxLen(0xFFffFFff)
+      .setPort(OFPort.of(6))
+      .build();
+    actions.add(output);
 
    if (FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG) {
        Set<OFFlowModFlags> flags = new HashSet<OFFlowModFlags>();
        flags.add(OFFlowModFlags.SEND_FLOW_REM);
        fmb.setFlags(flags);
    }
-   }
 
     FlowModUtils.setActions(fmb, actions, sw);
-
     logger.info("{} {} flow mod {}",new Object[]{ sw, (command == OFFlowModCommand.DELETE) ? "deleting" : "adding", fmb.build() });
-
-    //counterFlowMod.increment();
 
     // and write it out
     sw.write(fmb.build());
+  }
+
+private void writeFlowModDrop(IOFSwitch sw, OFFlowModCommand command, OFBufferId bufferId, Match match, OFPort outPort) {
+
+    OFFlowMod.Builder fmb;
+    if (command == OFFlowModCommand.DELETE) {
+        fmb = sw.getOFFactory().buildFlowDelete();
+    } else {
+      fmb = sw.getOFFactory().buildFlowAdd();
+    }
+    fmb.setMatch(match);
+    fmb.setCookie((U64.of(loadRegulation.LEARNING_SWITCH_COOKIE)));
+    fmb.setIdleTimeout(loadRegulation.FLOWMOD_DEFAULT_IDLE_TIMEOUT);
+    fmb.setHardTimeout(loadRegulation.FLOWMOD_DEFAULT_HARD_TIMEOUT);
+    fmb.setPriority(loadRegulation.FLOWMOD_PRIORITY);
+    fmb.setBufferId(bufferId);
+    fmb.setOutPort((command == OFFlowModCommand.DELETE) ? OFPort.ANY : outPort);
+
+    ArrayList<OFAction> actions = new ArrayList<OFAction>();
+
+    if (FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG) {
+       Set<OFFlowModFlags> flags = new HashSet<OFFlowModFlags>();
+       flags.add(OFFlowModFlags.SEND_FLOW_REM);
+       fmb.setFlags(flags);
+   }
+
+    FlowModUtils.setActions(fmb, actions, sw);
+    logger.info("{} {} flow mod {}",new Object[]{ sw, (command == OFFlowModCommand.DELETE) ? "deleting" : "adding", fmb.build() });
+
+    // and write it out
+    sw.write(fmb.build());
+}
+
+public Level getAPLoadLevel(IOFSwitch sw, OFPort inPort) {
+    if (macsPerSwitch(sw) < MAX_MACS_PER_SWITCH) {
+      if (macsPerSwitchPort(sw,inPort) < MAX_MACS_PER_SWITCH_PORT_HIGH_OPERATION) {
+        return Level.LOW;
+      } else if (macsPerSwitchPort(sw,inPort) < MAX_MACS_PER_SWITCH_PORT_CRITICAL_OPERATION) {
+          return Level.HIGH;
+        } else {
+            return Level.CRITICAL;
+          }
+    }
+      return Level.CRITICAL;
+  }
+
+  public int macsPerSwitch(IOFSwitch sw) {
+    Map<MacVlanPair, OFPort> swMap;
+    try {
+      swMap = macVlanToSwitchPortMap.get(sw);
+    }
+    catch (Exception e) {
+      logger.info ("Switch {} no registrado", sw);
+      return 0;
+    }
+    return swMap.size();
+  }
+
+  public int macsPerSwitchPort(IOFSwitch sw, OFPort port ) {
+    Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
+    int counter = 0;
+
+    for (Map.Entry<MacVlanPair, OFPort> entry : swMap.entrySet()) {
+      MacVlanPair key = entry.getKey();
+      OFPort value = entry.getValue();
+      if (value.equals(port)) {
+        counter ++;
+      }
+    }
+    return counter;
+  }
+
+  /**
+   * Clears the MAC/VLAN -> SwitchPort map for all switches
+   */
+  public void clearLearnedTable() {
+    macVlanToSwitchPortMap.clear();
+  }
+
+  /**
+   * Clears the MAC/VLAN -> SwitchPort map for a single switch
+   * @param sw The switch to clear the mapping for
+   */
+  public void clearLearnedTable(IOFSwitch sw) {
+    Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
+    if (swMap != null) {
+      swMap.clear();
+    }
+  }
+
+  public void printTable(Map<IOFSwitch, Map<MacVlanPair, OFPort>> map) {
+    for (IOFSwitch key : map.keySet()) {
+      logger.info("key {} value {}", key.toString(), map.get(key));
+    }
+  }
+
+  /**
+   * Get the port that a MAC/VLAN pair is associated with
+   * @param sw The switch to get the mapping from
+   * @param mac The MAC address to get
+   * @param vlan The VLAN number to get
+   * @return The port the host is on
+   */
+  public OFPort getFromPortMap(IOFSwitch sw, MacAddress mac, VlanVid vlan) {
+    if (vlan == VlanVid.FULL_MASK || vlan == null) {
+      vlan = VlanVid.ofVlan(0);
+    }
+    try {
+      Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
+    if (swMap != null) {
+      return swMap.get(new MacVlanPair(mac, vlan));
+    }
+    }
+    catch (Exception e) {
+      logger.info ("Exception en sw{}", sw);
+      return null;
+    }
+    // if none found
+    return null;
   }
 
   /**
@@ -592,127 +585,6 @@ public class loadRegulation implements IOFMessageListener, IFloodlightModule {
     printTable(macVlanToSwitchPortMap);
     logger.info("Switch: {} contiene {} MACs after Flow-Remove",sw, (macsPerSwitch(sw)));
     logger.info("puerto {} contiene {} MACs after Flow-Remove", portVal, macsPerSwitchPort(sw,portVal));
-  }
-
-  /**
-   * Get the port that a MAC/VLAN pair is associated with
-   * @param sw The switch to get the mapping from
-   * @param mac The MAC address to get
-   * @param vlan The VLAN number to get
-   * @return The port the host is on
-   */
-  public OFPort getFromPortMap(IOFSwitch sw, MacAddress mac, VlanVid vlan) {
-    if (vlan == VlanVid.FULL_MASK || vlan == null) {
-      vlan = VlanVid.ofVlan(0);
-    }
-    Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
-    if (swMap != null) {
-      return swMap.get(new MacVlanPair(mac, vlan));
-    }
-    // if none found
-    return null;
-  }
-
-  /**
-   * Clears the MAC/VLAN -> SwitchPort map for all switches
-   */
-  public void clearLearnedTable() {
-    macVlanToSwitchPortMap.clear();
-  }
-
-  /**
-   * Clears the MAC/VLAN -> SwitchPort map for a single switch
-   * @param sw The switch to clear the mapping for
-   */
-  public void clearLearnedTable(IOFSwitch sw) {
-    Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
-    if (swMap != null) {
-      swMap.clear();
-    }
-  }
-
-  public void printTable(Map<IOFSwitch, Map<MacVlanPair, OFPort>> map) {
-    for (IOFSwitch key : map.keySet()) {
-      logger.info("key {} value {}", key.toString(), map.get(key));
-    }
-  }
-
-  public int macsPerSwitch(IOFSwitch sw) {
-    Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
-    return swMap.size();
-  }
-
-  public int macsPerSwitchPort(IOFSwitch sw, OFPort port ) {
-    Map<MacVlanPair, OFPort> swMap = macVlanToSwitchPortMap.get(sw);
-    int counter = 0;
-
-    for (Map.Entry<MacVlanPair, OFPort> entry : swMap.entrySet()) {
-      MacVlanPair key = entry.getKey();
-      OFPort value = entry.getValue();
-      if (value.equals(port)) {
-        counter ++;
-      }
-    }
-    return counter;
-  }
-
-  public Level getAPLoadLevel(IOFSwitch sw, OFPort inPort) {
-    if (macsPerSwitch(sw) < MAX_MACS_PER_SWITCH) {
-      if (macsPerSwitchPort(sw,inPort) < MAX_MACS_PER_SWITCH_PORT_HIGH_OPERATION) {
-        return Level.LOW;
-      } else if (macsPerSwitchPort(sw,inPort) < MAX_MACS_PER_SWITCH_PORT_CRITICAL_OPERATION) {
-          return Level.HIGH;
-        } else {
-            return Level.CRITICAL;
-          }
-    }
-      return Level.CRITICAL;
-  }
-
-  protected Match createMatchFromPacket(IOFSwitch sw, OFPort inPort, FloodlightContext cntx) {
-    // The packet in match will only contain the port number.
-    // We need to add in specifics for the hosts we're routing between.
-    Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-    VlanVid vlan = VlanVid.ofVlan(eth.getVlanID());
-    MacAddress srcMac = eth.getSourceMACAddress();
-    MacAddress dstMac = eth.getDestinationMACAddress();
-    Match.Builder mb = sw.getOFFactory().buildMatch();
-    mb.setExact(MatchField.IN_PORT, inPort)
-    .setExact(MatchField.ETH_SRC, srcMac)
-    .setExact(MatchField.ETH_DST, dstMac);
-
-    if (eth.getEtherType() == EthType.IPv4) {
-      IPv4 ipv4 = (IPv4) eth.getPayload();
-      IPv4Address srcIp = ipv4.getSourceAddress();
-      IPv4Address dstIp = ipv4.getDestinationAddress();
-      mb.setExact(MatchField.IPV4_SRC, srcIp);
-      mb.setExact(MatchField.IPV4_DST, dstIp);
-
-      if (ipv4.getProtocol() == IpProtocol.TCP) {
-        TCP tcp = (TCP) ipv4.getPayload();
-        TransportPort srcTcpPort = tcp.getSourcePort();
-        TransportPort dstTcpPort = tcp.getDestinationPort();
-        mb.setExact(MatchField.TCP_SRC, srcTcpPort);
-        mb.setExact(MatchField.TCP_DST, dstTcpPort);
-      } else if (ipv4.getProtocol() == IpProtocol.UDP) {
-        UDP udp = (UDP) ipv4.getPayload();
-        TransportPort srcUdpPort = udp.getSourcePort();
-        TransportPort dstUdpPort = udp.getDestinationPort();
-        mb.setExact(MatchField.UDP_SRC, srcUdpPort);
-        mb.setExact(MatchField.UDP_SRC, srcUdpPort);
-      } else {
-        logger.info("Unhandled ethertype");
-      }
-    }
-
-   if (!vlan.equals(VlanVid.ZERO)) {
-      mb.setExact(MatchField.VLAN_VID, OFVlanVidMatch.ofVlanVid(vlan));
-    }
-    logger.info("src mac before return {}",mb.get(MatchField.ETH_SRC));
-    logger.info("dst mac before return {}",mb.get(MatchField.ETH_DST));
-    logger.info("src tcp port before return {}",mb.get(MatchField.TCP_SRC));
-    logger.info("dst tcp port before return {}",mb.get(MatchField.TCP_DST));
-    return mb.build();
   }
 
 }

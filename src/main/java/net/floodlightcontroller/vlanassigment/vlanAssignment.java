@@ -86,6 +86,7 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       protected static final int MAX_MACS_PER_SWITCH_PORT_CRITICAL_OPERATION  = 3;
       protected enum Level {LOW, HIGH, CRITICAL};
       protected enum APP {WEB, STREAMING, UNKNOWN};
+      protected static boolean ENABLE_VLAN_ASSIGNMENT = false;
 
       protected IFloodlightProviderService floodlightProvider;
       protected Set macAddresses;
@@ -143,10 +144,11 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       @Override
       public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
           // TODO Auto-generated method stub
-          floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+          if (ENABLE_VLAN_ASSIGNMENT) {
 	  floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
 	  floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
 	  floodlightProvider.addOFMessageListener(OFType.ERROR, this);
+          }
       }
 
       @Override
