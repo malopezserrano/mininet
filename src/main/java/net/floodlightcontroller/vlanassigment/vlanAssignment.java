@@ -87,6 +87,7 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
       protected enum Level {LOW, HIGH, CRITICAL};
       protected enum APP {WEB, STREAMING, UNKNOWN};
       protected static boolean ENABLE_VLAN_ASSIGNMENT = false;
+      protected static boolean ENABLE_REVERSE_VLAN_ASSIGNMENT = false;
 
       protected IFloodlightProviderService floodlightProvider;
       protected Set macAddresses;
@@ -243,7 +244,12 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
           }
 
           mbp.setExact(MatchField.ETH_TYPE, EthType.IPv4);
-          this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid);
+          this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid, false);
+
+          if (ENABLE_REVERSE_VLAN_ASSIGNMENT) {
+            mbp.setExact(MatchField.IN_PORT, OFPort.of(6));
+            this.writeFlowMod(sw, OFFlowModCommand.ADD, OFBufferId.NO_BUFFER, mbp.build(), inPort, vlanVid, true);
+          }
       }
 
   /**
@@ -273,9 +279,9 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
    * @param command The FlowMod actions (add, delete, etc).
    * @param bufferId The buffer ID if the switch has buffered the packet.
    * @param match The OFMatch structure to write.
-   * @param outPort The switch port to output it to.
+   * @param inPort The switch port to output it to.
    */
-  private void writeFlowMod(IOFSwitch sw, OFFlowModCommand command, OFBufferId bufferId, Match match, OFPort outPort, VlanVid vlanVid) {
+  private void writeFlowMod(IOFSwitch sw, OFFlowModCommand command, OFBufferId bufferId, Match match, OFPort inPort, VlanVid vlanVid, Boolean reverse) {
 
     OFFlowMod.Builder fmb;
     if (command == OFFlowModCommand.DELETE) {
@@ -289,44 +295,54 @@ public class vlanAssignment implements IOFMessageListener, IFloodlightModule {
     fmb.setHardTimeout(vlanAssignment.FLOWMOD_DEFAULT_HARD_TIMEOUT);
     fmb.setPriority(vlanAssignment.FLOWMOD_PRIORITY);
     fmb.setBufferId(bufferId);
-    fmb.setOutPort((command == OFFlowModCommand.DELETE) ? OFPort.ANY : outPort);
+    fmb.setOutPort((command == OFFlowModCommand.DELETE) ? OFPort.ANY : inPort);
+
+    if (FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG) {
+        Set<OFFlowModFlags> flags = new HashSet<OFFlowModFlags>();
+        flags.add(OFFlowModFlags.SEND_FLOW_REM);
+        fmb.setFlags(flags);
+    }
 
     ArrayList<OFAction> actions = new ArrayList<OFAction>();
+    if (!reverse) {
+      OFActionPushVlan setVlanPush = sw.getOFFactory().actions().buildPushVlan()
+        .setEthertype(EthType.VLAN_FRAME)
+        .build();
+      actions.add(setVlanPush);
 
-    OFActionPushVlan setVlanPush = sw.getOFFactory().actions().buildPushVlan()
-      //.pushVlan(EthType.VLAN_FRAME)
-      .setEthertype(EthType.VLAN_FRAME)
-      .build();
-    actions.add(setVlanPush);
+    	OFActionSetVlanVid.Builder ab = OFFactories.getFactory(OFVersion.OF_10).actions().buildSetVlanVid();
+    	ab.setVlanVid(vlanVid);
+    	logger.debug("action {}", ab.build());
+    	actions.add(ab.build());
 
-/*  OFActionSetVlanVid setVlanId = sw.getOFFactory().actions().buildSetVlanVid()
-      .setVlanVid(vlanVid)
-      .build();
-    actions.add(setVlanId);
-*/
+      OFActionOutput output = sw.getOFFactory().actions().buildOutput()
+        .setMaxLen(0xFFffFFff)
+        .setPort(OFPort.of(6))
+        .build();
+      actions.add(output);
 
-  	OFActionSetVlanVid.Builder ab = OFFactories.getFactory(OFVersion.OF_10).actions().buildSetVlanVid();
-  	ab.setVlanVid(vlanVid);
-  	logger.debug("action {}", ab.build());
-  	actions.add(ab.build());
+      FlowModUtils.setActions(fmb, actions, sw);
+      logger.info("{} {} flow mod {}",new Object[]{ sw, (command == OFFlowModCommand.DELETE) ? "deleting" : "adding", fmb.build() });
 
-    OFActionOutput output = sw.getOFFactory().actions().buildOutput()
-      .setMaxLen(0xFFffFFff)
-      .setPort(OFPort.of(6))
-      .build();
-    actions.add(output);
+      // and write it out
+      sw.write(fmb.build());
+    }
+    else {
+      OFActionPopVlan popVlan = sw.getOFFactory().actions().popVlan()
+      actions.add(popVlan);
 
-   if (FLOWMOD_DEFAULT_SET_SEND_FLOW_REM_FLAG) {
-       Set<OFFlowModFlags> flags = new HashSet<OFFlowModFlags>();
-       flags.add(OFFlowModFlags.SEND_FLOW_REM);
-       fmb.setFlags(flags);
-   }
+      OFActionOutput output = sw.getOFFactory().actions().buildOutput()
+        .setMaxLen(0xFFffFFff)
+        .setPort(inPort)
+        .build();
+      actions.add(output);
 
-    FlowModUtils.setActions(fmb, actions, sw);
-    logger.info("{} {} flow mod {}",new Object[]{ sw, (command == OFFlowModCommand.DELETE) ? "deleting" : "adding", fmb.build() });
+      FlowModUtils.setActions(fmb, actions, sw);
+      logger.info("{} {} flow mod {}",new Object[]{ sw, (command == OFFlowModCommand.DELETE) ? "deleting" : "adding", fmb.build() });
 
-    // and write it out
-    sw.write(fmb.build());
+      // and write it out
+      sw.write(fmb.build());
+    }
   }
 
 }
