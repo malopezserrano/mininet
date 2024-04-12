@@ -1,2 +1,2 @@
 # mininet
-Mininet WiFi examples
+Mininet WiFi exercises
